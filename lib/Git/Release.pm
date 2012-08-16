@@ -1,7 +1,7 @@
 package Git::Release;
 use strict;
 use warnings;
-our $VERSION = '0.01';
+our $VERSION = '0.02';
 use feature qw(say switch);
 use Moose;
 use Cwd;
@@ -177,27 +177,22 @@ sub find_develop_branch {
 sub checkout_develop_branch {
     my $self = shift;
     my $name = $self->config->develop_branch;
-
-    my $branch;
-    $branch = $self->find_branch( $name );
-
+    my $branch = $self->branch->find_branches( $name );
     # if branch found, we should check it out
-    if ( $branch ) {
-        $branch->checkout;
-    } else {
-        $branch = $self->_new_branch( ref => $name );
-        $branch->create( from => 'master' );
-    }
+    $branch = $self->_new_branch( ref => $name )->create( from => 'master' ) unless $branch;
+    $branch->checkout;
     return $branch;
 }
 
-sub create_feature_branch {
-    my ($self,$bname,$ref) = @_;
-    my $prefix = $self->config->feature_prefix;
-    my $b = $self->_new_branch( ref => $prefix . $bname );
-    $b->create( from => $ref || $self->config->develop_branch );
-    return $b;
+sub checkout_rc_branch {
+    my $self = shift;
+    my $name = $self->config->rc_branch;
+    my $rc = $self->branch->find_branches($name);
+    $rc = $self->branch->new_branch($name)->create(from => 'master') unless $rc ;
+    $rc->checkout;
+    return $rc;
 }
+
 
 sub gc {
     my $self = shift;
