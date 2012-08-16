@@ -13,6 +13,8 @@ has name => ( is => 'rw' , isa => 'Str' );
 
 has ref => ( is => 'rw' );
 
+has tracking_ref => ( is => 'rw', isa => 'Str' );
+
 has manager => ( is => 'rw' );
 
 has remote => ( is => 'rw' );
@@ -23,7 +25,13 @@ sub BUILD {
     my ($self,$args) = @_;
     unless( $args->{ref} ) {
         $args->{ref} = $args->{name} if $args->{name};
+    } else {
+        $args->{ref} =~ s{^refs/}{}; # always strip refs prefix
     }
+
+    # remote tracking ref
+    $args->{tracking_ref} =~ s{^refs/}{} if $args->{tracking_ref};
+
     unless( $args->{remote} ) {
         my $remote_name = $self->parse_remote_name($args->{ref});
         $self->remote($remote_name);
@@ -112,6 +120,15 @@ sub remote_name {
     }
 }
 
+sub remote_tracking_branch {
+    my $self = shift;
+    return $self->manager->branch->new_branch(ref => $self->tracking_ref);
+}
+
+sub has_tracking_ref {
+    return $_[0]->tracking_ref ? 1 : 0;
+}
+
 
 =head2 create
 
@@ -121,7 +138,14 @@ create branch
 
 sub create {
     my ($self,%args) = @_;
-    $self->manager->repo->command( 'branch' , $self->name , ($args{from} || 'master') );
+    my @args = qw(branch);
+
+    # git branch --set-upstream develop origin/develop
+    CORE::push @args, '--set-upstream' if $args{upstream};
+    CORE::push @args, $self->name;
+    CORE::push @args, $args{from} || 'master';
+
+    $self->manager->repo->command(@args);
     return $self;
 }
 
@@ -192,10 +216,7 @@ sub update_ref {
 
 sub rename {
     my ($self,$new_name,%args) = @_;
-    if( $self->is_local ) {
-        $self->local_rename($new_name,%args);
-    }
-    elsif( $self->is_remote ) {
+    if( $self->is_remote ) {
         # if local branch is found, then checkout it 
         # if not found, then checkout remote tracking branch
         my $local = $self->manager->branch->find_local_branches($self->name);
@@ -213,14 +234,14 @@ sub rename {
         $self->name($new_name);
         $self->update_ref($new_name);
     }
+    elsif( $self->is_local ) {
+        $self->local_rename($new_name,%args);
+    }
 }
 
 sub checkout {
     my $self = shift;
-    if( $self->is_local ) {
-        $self->manager->repo->command( 'checkout' , $self->name );
-    } 
-    elsif( $self->is_remote ) {
+    if( $self->is_remote ) {
         # find local branch to checkout if the branch exists
         my $local = $self->manager->branch->find_local_branches($self->name);
         if( $local ) {
@@ -231,6 +252,18 @@ sub checkout {
             return $self->manager->branch->new_branch( ref => $self->name );  # local branch instance
         }
     }
+    elsif( $self->is_local && $self->tracking_ref ) {
+        my $local = $self->manager->branch->find_local_branches($self->name);
+        if( $local ) {
+            $self->manager->repo->command( 'checkout' , $local->name );
+        } else {
+            $self->manager->repo->command( 'checkout' , '-t' , $self->tracking_ref , '-b' , $self->name );
+        }
+        return $self;
+    }
+    elsif( $self->is_local ) {
+        $self->manager->repo->command( 'checkout' , $self->name );
+    } 
 }
 
 sub merge {
@@ -256,16 +289,29 @@ sub rebase_from {
 }
 
 sub push {
-    my ($self,$remote) = @_;
+    my ($self,$remote,%args) = @_;
     $remote ||= $self->remote;
     die "remote name is requried." unless $remote;
-    $self->manager->repo->command( 'push' , $remote , $self->name );
+    my @args = ('push');
+
+    # git push --set-upstream origin develop
+    CORE::push @args, '--set-upstream' if $args{upstream};
+    CORE::push @args, $remote;
+    CORE::push @args, $self->name;
+    $self->manager->repo->command(@args);
+
+    if( $args{upstream} ) {
+        # update tracking_ref
+        # eg:  refs/remotes/origin/branch
+        $self->tracking_ref(join '/','refs','remotes',$remote,$self->name);
+    }
+
 }
 
 sub push_to_remotes {
     my $self = shift;
     $self->push($_)
-        for $self->manager->remote->all;
+        for $self->manager->remote->list;
 }
 
 

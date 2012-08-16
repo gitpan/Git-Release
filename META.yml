@@ -31,4 +31,4 @@ requires:
 resources:
   license: http://dev.perl.org/licenses/
   repository: git://git.corneltek.com/perl/Git-Release.git
-version: 0.02
+version: 0.03

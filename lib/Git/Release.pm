@@ -1,7 +1,7 @@
 package Git::Release;
 use strict;
 use warnings;
-our $VERSION = '0.02';
+our $VERSION = '0.03';
 use feature qw(say switch);
 use Moose;
 use Cwd;
@@ -116,11 +116,22 @@ sub install_hooks {
 #!/usr/bin/env perl
 use Git::Release;
 my \$m = Git::Release->new; # release manager
-\$m->get_current_branch->print_doc;
+\$m->branch->current->print_doc;
 END
 
     close $fh;
     chmod 0755, $checkout_hook;
+}
+
+sub tracking_list {
+    my ($self) = @_;
+    my @args = qw(for-each-ref);
+    push @args, '--format';
+    push @args ,'%(refname:short):%(upstream)';
+    push @args, 'refs/heads';
+    my @lines = $self->repo->command(@args);
+    my %tracking = map { split /:/ } @lines;
+    return %tracking;
 }
 
 sub update_remote_refs {
