@@ -1,26 +1,75 @@
 #!/usr/bin/env perl
-use warnings;
-use strict;
-use feature qw(say switch);
+use 5.12.0;
 use Cwd;
 use Git;
 use Getopt::Long;
 use List::MoreUtils qw(uniq);
 use DateTime;
+use Term::ANSIColor;
 use Git::Release;
 $|++;
 
-my $release = Git::Release->new;
 
-# my $working_dir = getcwd();
-# my $repo = Git->repository ( WorkingSubdir => $working_dir );
-# my @branches = uniq map { chomp; $_ } map { s/remotes\/.*?\///; $_ } map { s/^\*?\s*//; $_; } $repo->command( 'branch' , '-a' );
+my $opt_version;
+my $opt_tag;
+GetOptions(
+    'tag' => \$opt_tag,
+    'version=s' => \$opt_version,
+);
+
+die "--version option is required." unless $opt_version;
+
+my $release_from = shift || 'rc';
+
+my $release = Git::Release->new;
+my ($rc_branch) = $release->branch->find_branches( $release_from );
+
+die "rc branch not found, can not release." unless $rc_branch;
+
+my ($master) = $release->branch->find_branches( 'master' );
+my $local_rc = $rc_branch->checkout;
+
+say color('green'), "Checking out master" , color('reset');
+$master->checkout;
+
+say color('green'), "Merging changes from rc" , color('reset');
+my @lines = $master->merge( $local_rc );
+print $_ , "\n" for @lines;
+
+
+if( $opt_tag ) {
+    say color('green'), "Tagging $opt_version" , color('reset');
+    $release->repo->command('tag', $opt_version, '-m' , "Release version $opt_version." );
+}
+
+say color('green'), "Pushing to remote ", $master->remote_name, color('reset');
+$master->push( $master->remote_name , tags => 1 );
+
+say color('green'), "$opt_version is now released" , color('reset');
+
+__END__
+=pod
+
+=head1 SYNOPSIS
+
+To create a release candidate branch
+
+    git rc
+
+To make the release from release candidate branch and tag it
+
+    git release --version {your version number} --tag
+
+Steps:
+
+1. merge the release candidate branch to master.
+2. tag it.
+
+=cut
 
 my $action = shift;
 my $release_prefix = $repo->config('release.release-prefix') || 'release-';
 my $develop_branch = $repo->config('release.develop-branch') || 'develop';
-
-
 
 # use Data::Dumper; warn Dumper( \@branches );
 # exit;
@@ -41,43 +90,6 @@ sub list_all_branches {
             map { s/^\*?\s*//; $_; } 
                 $repo->command( 'branch' , '-a' );
 }
-
-sub list_local_branches {
-    my $repo = shift;
-    return map { chomp; $_; } 
-           map { s/^\*?\s*//; $_; } 
-           $repo->command( 'branch' , '-l' );
-}
-
-sub strip_remote_names { map { s/remotes\/.*?\///; $_ } @_; }
-
-# return branches with ready prefix.
-sub find_ready_branches {
-    my $repo = shift;
-    my $ready_prefix = $repo->config('release.ready-prefix') || 'ready-';
-    my @branches = list_all_branches $repo;
-    my @ready_branches = grep /$ready_prefix/, @branches;
-    return @ready_branches;
-}
-
-sub find_current_release_branch_name {
-    my $repo = shift;
-    my $release_prefix = $repo->config('release.release-prefix') || 'release-';
-    my @branches = strip_remote_names list_all_branches $repo;
-    my @release_branches = sort grep /$release_prefix/, @branches;
-    return unless @release_branches;  # release branch not found.
-    return pop @release_branches;
-}
-
-sub update_remote_refs {
-    my $repo = shift;
-    $repo->command(qw(remote update --prune));
-    $repo->command(qw(fetch --all --prune));
-}
-
-
-
-
 
 given ( $action ) 
 {
