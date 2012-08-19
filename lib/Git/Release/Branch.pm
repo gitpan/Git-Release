@@ -29,7 +29,6 @@ sub BUILD {
         $args->{ref} =~ s{^refs/}{}; # always strip refs prefix
     }
 
-    # remote tracking ref
     $args->{tracking_ref} =~ s{^refs/}{} if $args->{tracking_ref};
 
     unless( $args->{remote} ) {
@@ -41,7 +40,21 @@ sub BUILD {
         $args->{name} = $name;
         $self->name($name);
     }
+    $self->load_tracking_ref;
     return $args;
+}
+
+sub load_tracking_ref {
+    my ($self) = @_;
+    # remote tracking ref
+    unless ( $self->tracking_ref ) {
+        # try to get tracking ref
+        my %tracking = $self->manager->tracking_list;
+        my $ref = $tracking{ $self->name } 
+            if $self->name && defined $tracking{ $self->name };
+        $ref =~ s{^refs/}{} if $ref;
+        $self->tracking_ref( $ref ) if $ref;
+    } 
 }
 
 
@@ -114,9 +127,11 @@ sub is_remote { return $_[0]->ref =~ m{^remotes/}; }
 
 sub remote_name {  
     my $self = shift;
+    return if $self->remote;
     if($self->is_remote) {
-        my ($name) = ($self->ref =~ m{^remotes/(.*?)/});
-        return $name;
+        return $self->parse_remote_name( $self->ref );
+    } elsif( $self->tracking_ref ) {
+        return $self->parse_remote_name( $self->tracking_ref );
     }
 }
 
@@ -159,10 +174,11 @@ sub delete {
     my ($self,%args) = @_;
     if( $args{remote} ) {
         if( ref($args{remote}) eq 'ARRAY' ) {
-            $self->manager->repo->command( 'push' , $_ , ':' . $self->name ) for @{ $args{remote} };
+            $self->manager->repo->command( 'push' , $_ , ':' . $self->name ) 
+                    for @{ $args{remote} };
         } 
-        elsif( $args{remote} == 1 && $self->remote ) {
-            $self->manager->repo->command( 'push' , $self->remote , ':' . $self->name );
+        elsif( $args{remote} == 1 && $self->remote_name ) {
+            $self->manager->repo->command( 'push' , $self->remote_name , ':' . $self->name );
         }
         else {
             $self->manager->repo->command( 'push' , ($args{remote}) , ':' . $self->name );
@@ -233,6 +249,11 @@ sub rename {
         $local->push( $self->remote );
         $self->name($new_name);
         $self->update_ref($new_name);
+    }
+    elsif( $self->is_local && $self->tracking_ref ) {
+        $self->delete( remote => 1 );
+        $self->local_rename( $new_name , %args );
+        $self->push( $self->remote_name );  # push to tracking remote
     }
     elsif( $self->is_local ) {
         $self->local_rename($new_name,%args);
@@ -368,7 +389,7 @@ sub pull {
     CORE::push @a, '--edit'  if $args{edit};
     CORE::push @a, '--no-edit'  if $args{no_edit};
     CORE::push @a, '--squash'  if $args{squash};
-    CORE::push @a, ($args{remote} || $self->remote || 'origin');
+    CORE::push @a, ($args{remote} || $self->remote_name || 'origin');
     CORE::push @a, ($args{name} || $self->name);
     return $self->manager->repo->command(@a);
 }
